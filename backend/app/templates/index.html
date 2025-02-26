@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clown Detector 🤡</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            text-align: center;
+        }
+        .upload-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 2px dashed #ccc;
+            border-radius: 10px;
+        }
+        .result {
+            margin-top: 20px;
+            font-size: 24px;
+        }
+        .insult {
+            margin-top: 10px;
+            font-style: italic;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <h1>🤡 Clown Detector 🤡</h1>
+    
+    <div class="upload-section">
+        <h2>Upload an Image</h2>
+        <form action="/" method="post" enctype="multipart/form-data">
+            <input type="file" name="image" accept="image/*">
+            <button type="submit">Detect Clownery</button>
+        </form>
+    </div>
+
+    <div class="upload-section">
+        <h2>Analyze Text</h2>
+        <form action="/" method="post">
+            <textarea name="text" rows="4" cols="50" placeholder="Enter text to analyze..."></textarea>
+            <br>
+            <button type="submit">Analyze</button>
+        </form>
+    </div>
+
+    {% if rating %}
+    <div class="result">
+        <h2>{{ rating }}</h2>
+        <p class="insult">{{ fun_insult }}</p>
+    </div>
+    {% endif %}
+</body>
+</html> 

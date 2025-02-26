@@ -1,0 +1,8 @@
+Flask
+flask-cors
+torch
+transformers
+numpy
+pandas
+scikit-learn
+requests
