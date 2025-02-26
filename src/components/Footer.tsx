@@ -45,7 +45,7 @@ export default function Footer() {
           </motion.a>
           <motion.a 
             whileHover={{ scale: 1.2, y: -2 }}
-            href="https://www.spotify.com" 
+            href="https://open.spotify.com/user/o1mhl5cn2icv8bc2z81fgaiqc" 
             className="hover:text-pink-400 transition-colors"
           >
             <TbBrandSpotify size={28} />

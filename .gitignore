@@ -45,8 +45,9 @@ kaggle.json
 /models/
 /backend/models/
 /backend/app/models/
-backend/results/
-backend/logs/
+/results/
+/backend/results/
+/backend/logs/
 
 # Likely existing patterns in .gitignore
 node_modules/

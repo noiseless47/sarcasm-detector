@@ -1,6 +1,8 @@
+"use client";
+
 import './globals.css'
 import { DM_Sans, Londrina_Shadow } from 'next/font/google'
-import { DarkModeProvider } from '../context/DarkModeContext'
+import { ThemeProvider } from 'next-themes'
 
 const dmsans = DM_Sans({
   subsets: ['latin'],
@@ -25,9 +27,9 @@ export default function RootLayout({
         <title>Sarcasm Detector</title>
       </head>
       <body className={`${dmsans.variable} ${londrinashadow.variable}`}>
-        <DarkModeProvider>
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           {children}
-        </DarkModeProvider>
+        </ThemeProvider>
       </body>
     </html>
   )

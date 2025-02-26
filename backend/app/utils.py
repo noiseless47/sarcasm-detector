@@ -27,6 +27,8 @@ from llama_cpp import Llama
 import sentencepiece as spm
 from .models.sarcasm_neural_network import SarcasmNeuralNetwork
 from .models.llama_model import LlamaModel
+from .model_manager import ModelManager
+from .cloud_config import LLAMA_MODEL_PATH
 
 # Add the LLaMA model directory to Python path
 LLAMA_MODEL_PATH = Path(__file__).parent / "models" / "Llama3.2-3B-Instruct"
@@ -42,21 +44,20 @@ class SarcasmAnalyzer:
         print("Initializing SarcasmAnalyzer...")
         
         # Load parameters from params.json
-        params_path = os.path.join(os.path.dirname(__file__), 'models', 'Llama3.2-3B-Instruct', 'params.json')
+        params_path = LLAMA_MODEL_PATH / "params.json"
         with open(params_path, 'r') as f:
             params = json.load(f)
-            
-        # Reduce model size for testing to prevent memory issues
-        params['dim'] = min(params['dim'], 768)  # Reduce embedding dimension
-        params['n_layers'] = min(params['n_layers'], 6)  # Reduce number of layers
-        params['n_heads'] = min(params['n_heads'], 12)  # Reduce number of attention heads
-            
-        print(f"Using parameters: {params}")
+        
+        # Reduce model size to fit in 6GB VRAM
+        params['dim'] = 768  # Reduced from 3072
+        params['n_layers'] = 12  # Reduced from 28
+        params['n_heads'] = 12  # Reduced from 24
+        print(f"Using reduced parameters for memory efficiency: {params}")
         
         # Initialize model with reduced size
         self.model = SarcasmNeuralNetwork(params)
         
-        # Initialize tokenizer directly to avoid boolean issue
+        # Initialize tokenizer
         tokenizer_path = str(LLAMA_MODEL_PATH)
         try:
             print(f"Loading LlamaTokenizer from {tokenizer_path}")
@@ -67,29 +68,23 @@ class SarcasmAnalyzer:
             print("Falling back to BERT tokenizer")
             self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
         
-        # Check available GPU memory before deciding to use CUDA
+        # Use mixed precision and memory efficient settings
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if torch.cuda.is_available():
-            try:
-                # Get available GPU memory in bytes and convert to GB
-                free_memory_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
-                
-                # If we have more than 4GB free, use CUDA
-                if free_memory_gb > 4:
-                    self.device = torch.device("cuda")
-                    print(f"Using CUDA with {free_memory_gb:.2f}GB GPU memory")
-                else:
-                    self.device = torch.device("cpu")
-                    print(f"GPU has only {free_memory_gb:.2f}GB memory, using CPU instead")
-            except Exception as e:
-                print(f"Error checking GPU memory: {e}, using CPU")
-                self.device = torch.device("cpu")
-        else:
-            self.device = torch.device("cpu")
-            print("CUDA not available, using CPU")
+            # Enable automatic mixed precision
+            self.scaler = torch.cuda.amp.GradScaler()
+            # Empty CUDA cache
+            torch.cuda.empty_cache()
+            print("CUDA enabled with mixed precision")
         
-        self.model.to(self.device)
+        print(f"Using device: {self.device}")
         
-        self.confidence_threshold = 0.6  # Minimum confidence threshold
+        # Move model to device with memory efficient settings
+        self.model = self.model.to(self.device)
+        if hasattr(self.model, 'half'):
+            self.model = self.model.half()  # Convert to FP16
+        
+        self.confidence_threshold = 0.6
         self.load_sarcasm_dataset()
         self.load_or_train_model()
         print("SarcasmAnalyzer initialized successfully!")
@@ -515,7 +510,7 @@ class SarcasmAnalyzer:
             )
 
             print(f"Training on {len(train_texts)} examples, testing on {len(test_texts)} examples")
-            
+
             # Create a simple training loop without Hugging Face Trainer
             # This avoids the rotary embedding assertion error
             train_input_ids = []
@@ -523,11 +518,11 @@ class SarcasmAnalyzer:
             for text in train_texts:
                 encoded = self.tokenizer.encode_plus(
                     text,
-                    max_length=128,
-                    truncation=True,
+                max_length=128,
+                truncation=True, 
                     padding='max_length',
-                    return_tensors='pt'
-                )
+                return_tensors='pt'
+            )
                 train_input_ids.append(encoded['input_ids'])
                 train_attention_masks.append(encoded['attention_mask'])
             
@@ -542,46 +537,64 @@ class SarcasmAnalyzer:
                 train_labels
             )
             
-            # Create data loader
+            # Use smaller batch size
+            batch_size = 8  # Reduced from 16
+            
+            # Create data loader with smaller batch size
             train_loader = torch.utils.data.DataLoader(
                 train_dataset,
-                batch_size=16,
+                batch_size=batch_size,
                 shuffle=True
             )
             
-            # Create optimizer
-            optimizer = torch.optim.AdamW(self.model.parameters(), lr=2e-5)
+            # Create optimizer with memory efficient settings
+            optimizer = torch.optim.AdamW(
+                self.model.parameters(), 
+                lr=2e-5,
+                weight_decay=0.01,
+                eps=1e-8
+            )
+            
             criterion = torch.nn.CrossEntropyLoss()
             
-            # Training loop
-            print("\nTraining model with custom loop...")
+            print("\nTraining model with mixed precision...")
             num_epochs = 3
             for epoch in range(num_epochs):
                 self.model.train()
                 total_loss = 0
                 
                 for batch in train_loader:
+                    # Clear memory
+                    torch.cuda.empty_cache()
+                    
                     optimizer.zero_grad()
                     
                     input_ids = batch[0].to(self.device)
                     attention_mask = batch[1].to(self.device)
                     labels = batch[2].to(self.device)
                     
-                    # Modify the forward call to avoid the rotary embedding issue
-                    outputs = self.model.forward_no_rotary(input_ids, attention_mask)
+                    # Use automatic mixed precision
+                    with torch.cuda.amp.autocast():
+                        outputs = self.model.forward_no_rotary(input_ids, attention_mask)
+                        loss = criterion(outputs, labels)
                     
-                    loss = criterion(outputs, labels)
-                    loss.backward()
-                    optimizer.step()
+                    # Scale loss and backward pass
+                    self.scaler.scale(loss).backward()
+                    self.scaler.step(optimizer)
+                    self.scaler.update()
                     
                     total_loss += loss.item()
+                    
+                    # Clear memory after each batch
+                    del loss, outputs
+                    torch.cuda.empty_cache()
                 
                 avg_loss = total_loss / len(train_loader)
                 print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")
             
             print("\nModel training complete!")
             self.save_model()
-            
+
         except Exception as e:
             print(f"Error during training: {e}")
             traceback.print_exc()
@@ -656,7 +669,7 @@ class SarcasmAnalyzer:
             elif has_sincere_context:
                 # Moderate reduction for general sincere context
                 score -= 0.20
-            else:
+        else:
                 # Otherwise small boost for contrast
                 score += 0.12
         
@@ -693,7 +706,7 @@ class SarcasmAnalyzer:
             base = "This appears to be sarcastic. "
         else:
             base = "This might contain sarcasm. "
-            
+        
         # Extract the most relevant features for explanation
         reasons = []
         
@@ -783,8 +796,8 @@ class SarcasmAnalyzer:
             # Add a default explanation if none of the above apply
             if not sincere_explanations:
                 return base + "I didn't detect any typical sarcastic patterns."
-            else:
-                return base + sincere_explanations[0] + "."
+            
+            return base + sincere_explanations[0] + "."
             
         elif confidence > 0.65:
             return "This is likely sincere. Few or no sarcastic indicators were found."
